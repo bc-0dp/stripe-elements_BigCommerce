@@ -59,7 +59,7 @@ app.get("/setup-intent", async (req, res) => {
             automatic_payment_methods: {
                 enabled: true,
             },
-            // TODO: level3 data
+            // TODO: level3 data https://docs.stripe.com/api/payment_intents/create?lang=curl#create_payment_intent-amount_details-line_items
         });
 
         res.json({
