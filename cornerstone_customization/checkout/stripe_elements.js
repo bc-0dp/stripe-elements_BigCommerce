@@ -91,7 +91,7 @@ async function handleSubmit(e) {
     const { error } = await stripe.confirmPayment({
         elements,
         confirmParams: {
-            return_url: `http://localhost:8000/complete-order?orderId=${orderId}&checkoutToken=${checkoutToken}&paymentIntentId=${paymentIntentId}`,
+            return_url: `http://localhost:8000/complete-order?cartId={{cart_id}}&orderId=${orderId}&checkoutToken=${checkoutToken}&paymentIntentId=${paymentIntentId}`,
         },
     });
 
