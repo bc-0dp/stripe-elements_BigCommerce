@@ -4,3 +4,4 @@ node_modules
 .vscode
 localhost-cert.pem
 localhost-key.pem
+store.json

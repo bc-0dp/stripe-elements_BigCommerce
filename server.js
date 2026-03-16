@@ -5,10 +5,7 @@ import stripe from "stripe";
 import getCheckout from "./src/getCheckout.js";
 import getCheckoutToken from "./src/getCheckoutToken.js";
 import createOrder from "./src/createOrder.js";
-import handleCartLineItem from "./src/handleCartLineItem.js";
-import calculateProration from "./src/calculateProration.js";
 import updateOrderStatus from "./src/updateOrderStatus.js";
-import { set, get, del } from "./src/store.js";
 
 dotenv.config();
 const app = express();
@@ -54,10 +51,6 @@ app.get("/setup-intent", async (req, res) => {
             });
         }
 
-        set(`${req.query.cartId}`, {
-                customer: customer
-        }); 
-        
         // 5. Create Stripe PaymentIntent
         const paymentIntent = await stripeClient.paymentIntents.create({
             customer: customer.id,
@@ -84,26 +77,38 @@ app.get("/setup-intent", async (req, res) => {
 
 app.get("/complete-order", async (req, res) => {
     try {
-        const stored = get(req.query.cartId);
-        console.log("stored:", JSON.stringify(stored, null, 2));
-    
         const stripeClient = stripe(process.env.STRIPE_SECRET_KEY);
-        const updateOrderStatusResponse = await updateOrderStatus(req);
-        
+
+        // Fetch cart before updating order status — cart is deleted once the order is completed
+        const cartResponse = await fetch(
+            `https://api.bigcommerce.com/stores/${process.env.BC_STORE_HASH}/v3/carts/${req.query.cartId}`,
+            {
+                headers: {
+                    "X-Auth-Token": process.env.BC_API_TOKEN,
+                    "Content-Type": "application/json",
+                },
+            }
+        );
+        const cartData = await cartResponse.json();
+        const subscriptionItem = cartData.data.line_items.digital_items.find(
+            (item) => item.sku.startsWith("price_")
+        );
+
+        const [updateOrderStatusResponse, paymentIntent] = await Promise.all([
+            updateOrderStatus(req),
+            stripeClient.paymentIntents.retrieve(req.query.paymentIntentId),
+        ]);
+
         if (updateOrderStatusResponse.ok) {
-            const stored = get(req.query.cartId);
-            const paymentIntent = await stripeClient.paymentIntents.retrieve(req.query.paymentIntentId);
             const paymentMethodId = paymentIntent.payment_method;
-            
-            const subscription =
-                await stripeClient.subscriptions.create({
-                    customer: stored.customer.id,
-                    items: [{ price: stored.lineItems[0].sku }], // price_ stored as SKU
-                    default_payment_method: paymentMethodId,
-                    billing_cycle_anchor: Math.floor(stored.billingAnchor / 1000), // same anchor used in proration calc
-                    proration_behavior: "none", // proration already handled upfront — don't double-charge
-                });
-            
+
+            const subscription = await stripeClient.subscriptions.create({
+                customer: paymentIntent.customer,
+                items: [{ price: subscriptionItem.sku }],
+                default_payment_method: paymentMethodId,
+                proration_behavior: "create_prorations",
+            });
+
             console.log(`Subscription created in Stripe with ID: ${subscription.id}`);
 
             return res.redirect(301, `${process.env.BC_STORE_URL}/checkout/order-confirmation/${req.query.orderId}?t=${req.query.checkoutToken}`);
@@ -114,26 +119,6 @@ app.get("/complete-order", async (req, res) => {
 });
 
 
-// store/cart/lineItem/created
-app.post("/webhooks", async (req, res) => {
-    res.sendStatus(200);
-
-    const scope = req.body.scope;
-    if (scope === "store/cart/lineItem/created") {
-        await handleCartLineItem(req, res);
-        
-    }
-});
-
-// This is useful for PDP price display when you want to show the prorated amount before checkout
-app.get("/prorated-amount", async (req, res) => {
-
-    const base_price = req.query.base_price;
-
-    res.status(200).json({
-        proratedAmount: calculateProration(base_price), // example full price
-    });
-});
 
 
 app.get("/health", (req, res) => {
